@@ -1,5 +1,5 @@
 // 阅读器：按需加载章节，解决一次性拉取所有章节导致的卡顿。
-// - 章节目录：优先读取 {书名}/chapters.json（爬虫生成），缺失时回退动态探测 NN_chapter.txt。
+// - 章节目录：只读取构建生成的 chapters.json，失败提示重试，绝不探测正文。
 // - 正文：仅在用户选章 / 上一章 / 下一章时异步加载当前章并内存缓存，已读章节切换不重复下载。
 // - 其余功能保持：封面、内嵌图渲染、进度记忆、上下章、目录高亮。
 (function () {
@@ -12,66 +12,21 @@
   }
   function storageKey(bookKey) { return 'novel_progress_' + bookKey; }
 
-  async function fetchText(url) {
-    var resp = await fetch(url, { cache: 'force-cache' });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    return resp.text();
-  }
-
-  // Range 只读文件开头若干字节，用于探测标题（GitHub Pages 支持 206）
-  async function fetchHead(url, size) {
-    try {
-      var resp = await fetch(url, { headers: { Range: 'bytes=0-' + (size - 1) }, cache: 'force-cache' });
-      if (resp.status !== 206 && resp.status !== 200) throw new Error('HTTP ' + resp.status);
-      return await resp.text();
-    } catch (e) { throw e; }
-  }
-
-  function parseTitle(txt) {
-    var m = txt.match(/^#\s+(.+)\s*$/m);
-    return m ? m[1].trim() : '章节';
-  }
-
-  // 回退方案：动态探测章节（尝试 Range 取标题；不支持则回退全量）
-  async function probeChapters(book) {
-    var chapters = [];
-    var dir = book.dir;
-    for (var n = 1; n <= 999; n++) {
-      var num = String(n).padStart(2, '0');
-      var url = dir + '/' + num + '_chapter.txt';
-      var text = null;
-      try {
-        text = await fetchHead(url, 2048);
-      } catch (e) {
-        try { text = await fetchText(url); } catch (e2) { break; }
-      }
-      chapters.push({ num: num, title: parseTitle(text), loaded: false });
-    }
-    return chapters;
-  }
-
-  // 优先读 chapters.json；缺失则回退探测
-  async function loadChapterList(book) {
-    try {
-      var text = await fetchText(book.dir + '/chapters.json');
-      var arr = JSON.parse(text);
-      if (!Array.isArray(arr) || !arr.length) throw new Error('empty');
-      return arr.map(function (it) {
-        return { num: String(it.num).padStart(2, '0'), title: it.title || ('第 ' + it.num + ' 章'), loaded: false };
+  // 请求进行中及完成后均复用，失败则移除缓存，允许再次选择重试。
+  var chapterCache = new Map();
+  function loadChapter(book, chapter) {
+    var url = window.NovelCatalog.assetUrl(book, chapter.file);
+    if (!chapterCache.has(url)) {
+      var request = fetch(url, { cache: 'no-cache' }).then(function (response) {
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.text();
+      }).catch(function (error) {
+        chapterCache.delete(url);
+        throw error;
       });
-    } catch (e) {
-      return await probeChapters(book);
+      chapterCache.set(url, request);
     }
-  }
-
-  // 按需加载某章正文（内存缓存）
-  var _cache = {};
-  async function loadChapter(book, ch) {
-    if (ch.loaded) return _cache[book.key + ':' + ch.num];
-    var text = await fetchText(book.dir + '/' + ch.num + '_chapter.txt');
-    _cache[book.key + ':' + ch.num] = text;
-    ch.loaded = true;
-    return text;
+    return chapterCache.get(url);
   }
 
   // 去除正文的标题行(第一行 # ...)，返回纯正文
@@ -127,20 +82,28 @@
     renderSidebar();
 
     try {
-      State.chapters = await loadChapterList(State.book);
+      State.chapters = await window.NovelCatalog.load(State.book);
     } catch (e) {
       bootError('加载章节失败：' + e.message);
       return;
     }
     if (!State.chapters.length) {
-      bootError('未探测到章节，请确认目录包含 chapters.json 或 01_chapter.txt 等文件。');
+      bootError('本书暂无章节，请添加章节文件后重新构建站点。');
       return;
     }
     buildChapterList();
 
     var saved = null;
     try { saved = JSON.parse(localStorage.getItem(storageKey(State.book.key)) || 'null'); } catch (e) {}
-    var startIdx = (saved && saved.idx >= 0 && saved.idx < State.chapters.length) ? saved.idx : 0;
+    var startIdx = 0;
+    if (saved) {
+      if (saved.num) {
+        var found = State.chapters.findIndex(function (ch) { return ch.num === saved.num; });
+        startIdx = found >= 0 ? found : 0;
+      } else if (Number.isInteger(saved.idx) && saved.idx >= 0 && saved.idx < State.chapters.length) {
+        startIdx = saved.idx;
+      }
+    }
     goTo(startIdx, false);
   }
 
@@ -170,8 +133,10 @@
     for (var i = 0; i < items.length; i++) items[i].classList.toggle('active', i === idx);
   }
 
+  var renderSequence = 0;
   function goTo(idx, save) {
     if (idx < 0 || idx >= State.chapters.length) return;
+    var sequence = ++renderSequence;
     State.idx = idx;
     var ch = State.chapters[idx];
     var art = document.getElementById('article');
@@ -185,20 +150,23 @@
 
     var prev = art.querySelector('#prevBtn'), next = art.querySelector('#nextBtn');
     prev.disabled = idx === 0;
+    prev.textContent = idx > 0 ? '上一章 ' + State.chapters[idx - 1].title : '已是第一章';
     prev.addEventListener('click', function () { goTo(idx - 1, true); });
     next.disabled = idx === State.chapters.length - 1;
+    next.textContent = !next.disabled ? '下一章 ' + State.chapters[idx + 1].title : '已是最后一章';
     next.addEventListener('click', function () { goTo(idx + 1, true); });
 
     setActive(idx);
-    if (save) { try { localStorage.setItem(storageKey(State.book.key), JSON.stringify({ idx: idx, title: ch.title })); } catch (e) {} }
+    if (save) { try { localStorage.setItem(storageKey(State.book.key), JSON.stringify({ idx: idx, num: ch.num, title: ch.title })); } catch (e) {} }
     window.scrollTo({ top: 0 });
 
     // 按需异步加载当前章正文
     loadChapter(State.book, ch).then(function (text) {
-      if (State.idx !== idx) return; // 用户已切到别的章节，忽略过期返回
+      if (sequence !== renderSequence) return; // 用户已切到别的章节，忽略过期返回
       art.querySelector('.prose').innerHTML = renderBody(State.book, stripTitle(text));
     }).catch(function (e) {
-      art.querySelector('.prose').innerHTML = '<p class="loading">加载失败：' + esc(e.message) + '</p>';
+      if (sequence !== renderSequence) return;
+      art.querySelector('.prose').innerHTML = '<p class="loading">加载失败，请重新选择本章重试：' + esc(e.message) + '</p>';
     });
   }
 

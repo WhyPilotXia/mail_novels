@@ -109,13 +109,14 @@ body{
 .prose .novel-img figcaption{margin-top:10px;font-size:13px;color:var(--muted)}
 .article-footer{
   margin-top:40px;padding-top:22px;border-top:1px solid #f1f5f9;
-  display:flex;justify-content:space-between;gap:12px;align-items:center;
+  display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:stretch;
 }
 .nav-btn{
   display:inline-flex;align-items:center;justify-content:center;
   background:var(--primary);color:#fff;font-weight:700;font-size:14px;
   border:0;border-radius:14px;padding:12px 22px;cursor:pointer;gap:6px;
-  transition:background .15s;flex-shrink:0;
+  transition:background .15s;flex:1 1 240px;min-width:0;
+  white-space:normal;overflow-wrap:anywhere;text-align:left;line-height:1.6;
 }
 .nav-btn:hover{background:var(--primary-ink)}
 .nav-btn:disabled{background:#cbd5e1;cursor:not-allowed}
