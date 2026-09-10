@@ -109,7 +109,7 @@ git init
 git add .
 git commit -m "chore: init novel archive"
 git branch -M main
-git remote add origin git@github.com:<你的用户名>/<仓库名>.git
+git remote add origin git@github.com:WhyPilotXia/mail_novels.git
 git push -u origin main
 ```
 
