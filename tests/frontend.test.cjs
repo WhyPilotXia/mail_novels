@@ -15,7 +15,7 @@ class Element {
   addEventListener(name, callback) { this.events[name] = callback; }
   click() { if (!this.disabled) this.events.click?.(); }
 }
-function setup(page, failCatalog = false) {
+function setup(page, failCatalog = false, count = 3) {
   const elements = {};
   const requests = [];
   const document = {
@@ -23,7 +23,7 @@ function setup(page, failCatalog = false) {
     createElement: () => new Element(),
     querySelectorAll: () => elements.chapList?.children || []
   };
-  const chapters = [1, 2, 3].map(n => ({ num: `0${n}`, title: `第 ${n} 章 标题${n}`, file: `0${n}_chapter.txt` }));
+  const chapters = [1, 2, 3].slice(0, count).map(n => ({ num: `0${n}`, title: `第 ${n} 章 标题${n}`, file: `0${n}_chapter.txt` }));
   const window = { location: { search: '?book=b0' }, scrollTo() {}, SITE_VERSION: 'test-version' };
   window.BOOKS = [0, 1, 2].map(n => ({ key: `b${n}`, dir: `书${n}`, slug: `书${n}`, cover: 'cover.png', intro: '' }));
   const storage = new Map();
@@ -57,7 +57,7 @@ test('reader only requests current chapter; buttons show titles; visited chapter
   await settle();
   assert.equal(requests.length, 2);
   assert.match(requests[1].url, /01_chapter.txt/);
-  assert.ok(elements.article.querySelector('#prevBtn').disabled);
+  assert.ok(elements.article.querySelector('#prevBtn').hidden);
   assert.equal(elements.article.querySelector('#nextBtn').textContent, '下一章 ' + chapters[1].title);
   elements.article.querySelector('#nextBtn').click();
   await settle();
@@ -70,7 +70,7 @@ test('reader only requests current chapter; buttons show titles; visited chapter
   elements.chapList.children[2].click();
   await settle();
   assert.equal(requests.length, 4);
-  assert.ok(elements.article.querySelector('#nextBtn').disabled);
+  assert.ok(elements.article.querySelector('#nextBtn').hidden);
 });
 test('reader catalog failure makes zero chapter requests', async () => {
   const { requests, elements } = setup('reader.js', true);

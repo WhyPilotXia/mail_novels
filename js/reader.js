@@ -149,12 +149,13 @@
     art.querySelector('.article-title').textContent = ch.title;
 
     var prev = art.querySelector('#prevBtn'), next = art.querySelector('#nextBtn');
-    prev.disabled = idx === 0;
-    prev.textContent = idx > 0 ? '上一章 ' + State.chapters[idx - 1].title : '已是第一章';
+    prev.hidden = idx === 0;
+    prev.textContent = !prev.hidden ? '上一章 ' + State.chapters[idx - 1].title : '';
     prev.addEventListener('click', function () { goTo(idx - 1, true); });
-    next.disabled = idx === State.chapters.length - 1;
-    next.textContent = !next.disabled ? '下一章 ' + State.chapters[idx + 1].title : '已是最后一章';
+    next.hidden = idx === State.chapters.length - 1;
+    next.textContent = !next.hidden ? '下一章 ' + State.chapters[idx + 1].title : '';
     next.addEventListener('click', function () { goTo(idx + 1, true); });
+    art.querySelector('.article-footer').hidden = prev.hidden && next.hidden;
 
     setActive(idx);
     if (save) { try { localStorage.setItem(storageKey(State.book.key), JSON.stringify({ idx: idx, num: ch.num, title: ch.title })); } catch (e) {} }

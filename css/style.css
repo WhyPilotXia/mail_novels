@@ -119,7 +119,7 @@ body{
   white-space:normal;overflow-wrap:anywhere;text-align:left;line-height:1.6;
 }
 .nav-btn:hover{background:var(--primary-ink)}
-.nav-btn:disabled{background:#cbd5e1;cursor:not-allowed}
+.nav-btn[hidden],.article-footer[hidden]{display:none}
 .nav-btn.ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
 .nav-btn.ghost:hover:not(:disabled){background:#f8fafc;color:var(--ink)}
 .placeholder{
