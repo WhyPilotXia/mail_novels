@@ -73,7 +73,7 @@ body{
   /* 用上下布局，正文始终显示在书籍信息下方，不做 sticky 以免与正文重叠 */
 }
 .sidebar .cover{
-  width:min(100%, 260px);aspect-ratio:3/4;margin:0 auto;border-radius:16px;
+  width:100%;aspect-ratio:3/4;border-radius:16px;
   background:#f1f5f9;background-position:center;background-size:cover;
 }
 .bookname{margin-top:16px;font-size:22px;font-weight:900;text-align:center}
