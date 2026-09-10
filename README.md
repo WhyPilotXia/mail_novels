@@ -117,3 +117,34 @@ git push -u origin main
 
 ---
 
+## 在线阅读（GitHub Pages）
+
+本仓库已启用 GitHub Pages，可通过网页直接浏览小说书架、封面与章节内容。
+
+- **仓库**：https://github.com/WhyPilotXia/mail_novels
+- **在线书架**：https://whypilotxia.github.io/mail_novels/
+
+### 阅读入口
+
+| 页面 | 地址 |
+|---|---|
+| 书架（选书） | `https://whypilotxia.github.io/mail_novels/` |
+| 阅读《李氏庄园》 | `.../mail_novels/reader.html?book=lishizhuangyuan` |
+| 阅读《回信券风暴》 | `.../mail_novels/reader.html?book=huixinquanfengbao` |
+| 阅读《股神牛久盛》 | `.../mail_novels/reader.html?book=gushenniujiusheng` |
+
+支持功能：书架封面展示、正文阅读、正文内嵌插图、上一章 / 下一章切换。
+
+### 启用 / 更新 Pages
+
+在 GitHub 仓库设置中用 push 即可自动发布（Pages 源通常选择 `Deploy from a branch` → `main` / `(root)`）。每次 `git push` 到 `main` 后，站点会自动更新：
+
+```bash
+cd ~/Downloads/小说
+git add .
+git commit -m "update"
+git push
+```
+
+> 注意：GitHub 公开仓库的 Pages 是公网可访问的，内容供个人阅读备份使用，请勿上传带敏感数据的文件（如 `cookie.txt`）。
+
