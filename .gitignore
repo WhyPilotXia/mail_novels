@@ -1,0 +1,17 @@
+# 敏感凭据 - 切勿提交（显式命中，含所有层级）
+cookie.txt
+scripts/cookie.txt
+*.cookie
+
+# 爬取输出（内容较大，宜单独管理；按需取消注释）
+# 李氏庄园/
+# 回信券风暴/
+# 股神牛久盛/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
