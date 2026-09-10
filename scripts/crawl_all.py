@@ -110,8 +110,9 @@ def process_book(cookie, name, book_id, cover_fname, chapters):
     else:
         print(f"  [封面] 已存在，跳过")
 
-    # 2) 逐章正文 + 图片
+# 2) 逐章正文 + 图片
     merged_lines = []
+    chapter_meta = []
     seen = set()
     for num, cid in chapters:
         try:
@@ -156,17 +157,26 @@ def process_book(cookie, name, book_id, cover_fname, chapters):
         merged_lines.append(f"## {title}\n\n{body}\n")
         print(f"  [正文OK] {title}")
 
-        # 4) 写单章 txt（含本地图片引用）
+# 4) 写单章 txt（含本地图片引用）
         single_path = os.path.join(book_dir, f"{num}_chapter.txt")
         with open(single_path, "w", encoding="utf-8") as f:
             f.write(f"# {title}\n\n{body}\n")
+        chapter_meta.append({"num": str(num).zfill(2), "title": title})
         time.sleep(0.3)
 
-    # 3) 合并全集
+# 3) 合并全集
     merged_path = os.path.join(book_dir, f"{name}_全集.txt")
     with open(merged_path, "w", encoding="utf-8") as f:
         f.write(f"{name}\n" + "=" * 30 + "\n\n" + "\n".join(merged_lines))
     print(f"  [全集] -> {merged_path} ({os.path.getsize(merged_path)} bytes, {len(merged_lines)} 章)")
+
+    # 4) 章节目录 chapters.json（供网页阅读按需加载）
+    import json as _json
+    ch_path = os.path.join(book_dir, "chapters.json")
+    with open(ch_path, "w", encoding="utf-8") as f:
+        _json.dump(chapter_meta, f, ensure_ascii=False, indent=2)
+    print(f"  [目录] -> {ch_path} ({len(chapter_meta)} 章)")
+
     print(f"  目录: {book_dir}")
 
 

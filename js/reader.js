@@ -1,6 +1,7 @@
-// 阅读器：加载书籍清单 + 动态探测章节 txt + 渲染正文（含内嵌图）+ 上下章 + 进度记忆。
-// 章节文件按 NN_chapter.txt 递增探测（NN=01,02,...直到 404），因此外部新增章节后刷新即自动出现，
-// 无需改任何代码。封面与内嵌图均直接引用原始 assets 目录文件。
+// 阅读器：按需加载章节，解决一次性拉取所有章节导致的卡顿。
+// - 章节目录：优先读取 {书名}/chapters.json（爬虫生成），缺失时回退动态探测 NN_chapter.txt。
+// - 正文：仅在用户选章 / 上一章 / 下一章时异步加载当前章并内存缓存，已读章节切换不重复下载。
+// - 其余功能保持：封面、内嵌图渲染、进度记忆、上下章、目录高亮。
 (function () {
   'use strict';
 
@@ -12,34 +13,65 @@
   function storageKey(bookKey) { return 'novel_progress_' + bookKey; }
 
   async function fetchText(url) {
-    var resp = await fetch(url, { cache: 'no-cache' });
+    var resp = await fetch(url, { cache: 'force-cache' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     return resp.text();
   }
 
-  // 按 NN_chapter.txt 探测章节，直到文件不存在（404）
-  async function probeChapters(book) {
-    var chapters = [];
-    var dir = book.dir;
-    var digits = 2; // 支持 01~99；每探不到即停
-    for (var n = 1; n <= 999; n++) {
-      var num = String(n).padStart(digits, '0');
-      var url = dir + '/' + num + '_chapter.txt';
-      var text = null;
-      try {
-        text = await fetchText(url);
-      } catch (e) {
-        break; // 该章不存在，停止
-      }
-      var title = parseTitle(text);
-      chapters.push({ num: num, title: title, raw: text });
-    }
-    return chapters;
+  // Range 只读文件开头若干字节，用于探测标题（GitHub Pages 支持 206）
+  async function fetchHead(url, size) {
+    try {
+      var resp = await fetch(url, { headers: { Range: 'bytes=0-' + (size - 1) }, cache: 'force-cache' });
+      if (resp.status !== 206 && resp.status !== 200) throw new Error('HTTP ' + resp.status);
+      return await resp.text();
+    } catch (e) { throw e; }
   }
 
   function parseTitle(txt) {
     var m = txt.match(/^#\s+(.+)\s*$/m);
     return m ? m[1].trim() : '章节';
+  }
+
+  // 回退方案：动态探测章节（尝试 Range 取标题；不支持则回退全量）
+  async function probeChapters(book) {
+    var chapters = [];
+    var dir = book.dir;
+    for (var n = 1; n <= 999; n++) {
+      var num = String(n).padStart(2, '0');
+      var url = dir + '/' + num + '_chapter.txt';
+      var text = null;
+      try {
+        text = await fetchHead(url, 2048);
+      } catch (e) {
+        try { text = await fetchText(url); } catch (e2) { break; }
+      }
+      chapters.push({ num: num, title: parseTitle(text), loaded: false });
+    }
+    return chapters;
+  }
+
+  // 优先读 chapters.json；缺失则回退探测
+  async function loadChapterList(book) {
+    try {
+      var text = await fetchText(book.dir + '/chapters.json');
+      var arr = JSON.parse(text);
+      if (!Array.isArray(arr) || !arr.length) throw new Error('empty');
+      return arr.map(function (it) {
+        return { num: String(it.num).padStart(2, '0'), title: it.title || ('第 ' + it.num + ' 章'), loaded: false };
+      });
+    } catch (e) {
+      return await probeChapters(book);
+    }
+  }
+
+  // 按需加载某章正文（内存缓存）
+  var _cache = {};
+  async function loadChapter(book, ch) {
+    if (ch.loaded) return _cache[book.key + ':' + ch.num];
+    var text = await fetchText(book.dir + '/' + ch.num + '_chapter.txt');
+    _cache[book.key + ':' + ch.num] = text;
+    ch.loaded = true;
+    return text;
   }
 
   // 去除正文的标题行(第一行 # ...)，返回纯正文
@@ -94,15 +126,14 @@
     document.title = State.book.slug + ' · 阅读';
     renderSidebar();
 
-    // 动态探测章节（外部新增章节自动出现）
     try {
-      State.chapters = await probeChapters(State.book);
+      State.chapters = await loadChapterList(State.book);
     } catch (e) {
       bootError('加载章节失败：' + e.message);
       return;
     }
     if (!State.chapters.length) {
-      bootError('未探测到章节，请确认目录包含 01_chapter.txt … 等文件。');
+      bootError('未探测到章节，请确认目录包含 chapters.json 或 01_chapter.txt 等文件。');
       return;
     }
     buildChapterList();
@@ -146,12 +177,11 @@
     var art = document.getElementById('article');
     art.innerHTML =
       '<header class="article-header"><p class="article-book"></p><h2 class="article-title"></h2></header>' +
-      '<div class="prose"></div>' +
+      '<div class="prose"><p class="loading">加载中…</p></div>' +
       '<footer class="article-footer"><button class="nav-btn ghost" id="prevBtn">← 上一章</button>' +
       '<button class="nav-btn" id="nextBtn">下一章 →</button></footer>';
     art.querySelector('.article-book').textContent = State.book.slug;
     art.querySelector('.article-title').textContent = ch.title;
-    art.querySelector('.prose').innerHTML = renderBody(State.book, stripTitle(ch.raw));
 
     var prev = art.querySelector('#prevBtn'), next = art.querySelector('#nextBtn');
     prev.disabled = idx === 0;
@@ -162,6 +192,14 @@
     setActive(idx);
     if (save) { try { localStorage.setItem(storageKey(State.book.key), JSON.stringify({ idx: idx, title: ch.title })); } catch (e) {} }
     window.scrollTo({ top: 0 });
+
+    // 按需异步加载当前章正文
+    loadChapter(State.book, ch).then(function (text) {
+      if (State.idx !== idx) return; // 用户已切到别的章节，忽略过期返回
+      art.querySelector('.prose').innerHTML = renderBody(State.book, stripTitle(text));
+    }).catch(function (e) {
+      art.querySelector('.prose').innerHTML = '<p class="loading">加载失败：' + esc(e.message) + '</p>';
+    });
   }
 
   function bootError(msg) {
