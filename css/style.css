@@ -72,14 +72,12 @@ body{
   background:var(--card);padding:18px;box-shadow:var(--shadow);
   /* 用上下布局，正文始终显示在书籍信息下方，不做 sticky 以免与正文重叠 */
 }
-.sidebar-head{display:flex;gap:16px;align-items:flex-start}
 .sidebar .cover{
-  width:96px;aspect-ratio:3/4;flex-shrink:0;border-radius:14px;
+  width:min(100%, 260px);aspect-ratio:3/4;margin:0 auto;border-radius:16px;
   background:#f1f5f9;background-position:center;background-size:cover;
 }
-.side-meta{flex:1;min-width:0}
-.bookname{margin-top:2px;font-size:20px;font-weight:900}
-.bookdesc{margin-top:8px;font-size:13px;line-height:1.7;color:var(--muted)}
+.bookname{margin-top:16px;font-size:22px;font-weight:900;text-align:center}
+.bookdesc{margin-top:10px;font-size:13px;line-height:1.7;color:var(--muted);text-align:center}
 .chapters{margin-top:18px;border-top:1px solid var(--border);padding-top:14px}
 .chap-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);padding:0 4px}
 .chap-list{margin-top:8px;max-height:400px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;padding-right:4px}
