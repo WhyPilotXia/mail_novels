@@ -51,7 +51,7 @@ python3 --version   # 3.7+ 即可
 __Secure-next-auth.session-token=xxx; your_cookie_key=xxx
 ```
 
-> ⚠️ **安全提醒**：`cookie.txt` 属于敏感凭据，已被 `.gitignore` 忽略，切勿提交到 GitHub。若脚本的 cookie 失效（返回登录页），重新按上述步骤更新即可。
+
 
 ### 3. 运行
 
@@ -101,7 +101,7 @@ BOOKS = [
 
 ---
 
-## 推送到私有 GitHub
+## 推送到 GitHub
 
 ```bash
 cd ~/Downloads/小说
@@ -117,6 +117,3 @@ git push -u origin main
 
 ---
 
-## 免责声明
-
-本项目仅供个人学习与阅读备份，请勿用于商业用途或对外分发平台内容。
