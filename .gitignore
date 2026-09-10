@@ -11,3 +11,7 @@ __pycache__/
 
 # Generated Pages artifact
 _site/
+
+# Local crawl staging and archived removed chapters
+.crawl-*/
+.crawl-backups/

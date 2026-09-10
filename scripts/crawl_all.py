@@ -1,207 +1,310 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""按 books JSON 爬取三本书的全部内容（正文、附带图片、封面图），各放一个目录。
-输出目录: ~/Downloads/小说/{书名}/
-用法: python3 crawl_all.py
+"""Locally sync /novel/text to this repository, then manually commit/push.
+Python 3.9+ and Node.js 22+, standard libraries only. Never run in Pages CI.
 """
+import argparse
+import html
 import json
 import os
+from pathlib import Path
 import re
+import shutil
+import sys
+import tempfile
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 
-BASE = "https://mail.ypan.hk"
-DOWNLOAD_ROOT = os.path.expanduser("~/Downloads/小说")
+from build_site import read_books
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-COOKIE_FILE = os.path.join(SCRIPT_DIR, "cookie.txt")
-
-IMG_PATTERN = re.compile(r'(/novel/img/[A-Za-z0-9_.\-]+)')
-
-# 三本书定义: (书名, book_id, 封面文件名, 章节列表[(序号, chapter_id)])
-BOOKS = [
-    ("李氏庄园", "book-mst34cam-jq76v1", "lishizhuangyuan_cover.png", [
-        ("01", "chapter-mst34x23-lphhxu"), ("02", "chapter-mst39jhk-dds6he"),
-        ("03", "chapter-mst3i53i-2y5kif"), ("04", "chapter-mst3zn7v-vncrx3"),
-        ("05", "chapter-mst40jph-9c1oqp"), ("06", "chapter-mst44vvj-44ns1t"),
-        ("07", "chapter-mst45o57-82lhqo"), ("08", "chapter-mst6duom-ispxnp"),
-        ("09", "chapter-mst8aogo-5zcq1u"), ("10", "chapter-mst8iqfp-i9aq3u"),
-        ("11", "chapter-mst8zqth-fd51cy"), ("12", "chapter-msu41wxv-2rydbn"),
-        ("13", "chapter-msu4fxza-pwnovi"), ("14", "chapter-msu4uxgz-czojja"),
-        ("15", "chapter-msujpn2k-b5sohc"), ("16", "chapter-msukeq9l-obt5p7"),
-        ("17", "chapter-msunhf6h-z5dhdd"), ("18", "chapter-msuocmme-525zew"),
-        ("19", "chapter-msuou1e2-8hwg1w"), ("20", "chapter-msup2nhv-vkdf5s"),
-        ("21", "chapter-msuptylb-u2oquq"), ("22", "chapter-msuqjyys-93fmlq"),
-        ("23", "chapter-msvng0wt-q31q02"), ("24", "chapter-msvvmadn-ljy7d6"),
-        ("25", "chapter-msvvozyj-qpql4g"), ("26", "chapter-msvvwu6c-ebjlfq"),
-        ("27", "chapter-msvw4wb4-lus8im"), ("28", "chapter-msvzkh92-oayo0t"),
-        ("29", "chapter-msvzuvyo-v81rmx"), ("30", "chapter-msw0e0dj-k18k91"),
-        ("31", "chapter-msx2606n-tdcx9s"), ("32", "chapter-msxb676u-0ptv0z"),
-        ("33", "chapter-msxbvp5o-pm9frw"), ("34", "chapter-msxc8us7-258o93"),
-        ("35", "chapter-msyg5l8a-goseco"), ("36", "chapter-mtem862t-o2um4c"),
-        ("37", "chapter-mtemlb15-2nmowu"), ("38", "chapter-mtemw059-kq7tlm"),
-        ("39", "chapter-mtkcfdg6-jtobng"),
-    ]),
-    ("回信券风暴", "book-mst71ql5-sstw6p", "17342.png", [
-        ("01", "chapter-mst72iw7-fdgykb"), ("02", "chapter-mst759r4-j4g8tg"),
-        ("03", "chapter-mst7aeig-bp5pw5"), ("04", "chapter-mst7dgas-fhrr6w"),
-    ]),
-    ("股神牛久盛", "book-mszmyrxu-zfsccx", "17781.png", [
-        ("01", "chapter-msznhiy7-7pydub"), ("02", "chapter-mszupl4w-is0j7m"),
-        ("03", "chapter-mszxg10n-hadki4"), ("04", "chapter-mszxygmj-sl87ai"),
-        ("05", "chapter-mszyzli7-06ynpr"), ("06", "chapter-mszzho5x-0fgwrp"),
-        ("07", "chapter-mt0007c3-rwbp04"),
-    ]),
-]
+BASE = 'https://mail.ypan.hk'
+ROOT = Path(__file__).resolve().parents[1]
+COOKIE_FILE = ROOT / 'scripts/cookie.txt'
+IMAGE_PATTERN = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+ID_PATTERN = re.compile(r'[A-Za-z0-9_-]+')
 
 
-def load_cookie():
-    with open(COOKIE_FILE, "r", encoding="utf-8") as f:
-        return f.read().strip()
+class CrawlError(Exception):
+    pass
 
 
-def fetch_chapter(cookie, book_id, chapter_id):
-    url = f"{BASE}/novel/text/books/{book_id}/chapters/{chapter_id}"
-    req = urllib.request.Request(url)
-    req.add_header("accept", "*/*")
-    req.add_header("referer", f"https://mail.ypan.hk/novel?book={book_id}&chapter={chapter_id}")
-    req.add_header("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36")
-    req.add_header("cookie", cookie)
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise CrawlError('接口发生重定向，可能需要更新本地 Cookie；未转发凭据。')
 
 
-def download_file(cookie, url, dest):
-    req = urllib.request.Request(url)
-    req.add_header("accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
-    req.add_header("referer", f"https://mail.ypan.hk/novel?book={BOOK_REF}")
-    req.add_header("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36")
-    req.add_header("cookie", cookie)
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = resp.read()
-        head = data[:128].lstrip().lower()
-        if head.startswith(b'<!doctype') or head.startswith(b'<html') or head.startswith(b'<!'):
-            raise RuntimeError("response is HTML page, not a file")
-        with open(dest, "wb") as f:
-            f.write(data)
-    return len(data)
-
-
-BOOK_REF = "book-mst34cam-jq76v1"  # 默认引用，下载时按实际书更新
-
-
-def process_book(cookie, name, book_id, cover_fname, chapters):
-    global BOOK_REF
-    BOOK_REF = book_id
-
-    book_dir = os.path.join(DOWNLOAD_ROOT, name)
-    assets_dir = os.path.join(book_dir, "assets")
-    os.makedirs(assets_dir, exist_ok=True)
-
-    # 1) 封面
-    cover_dest = os.path.join(assets_dir, cover_fname)
-    cover_url = f"{BASE}/novel/img/{cover_fname}"
-    if not os.path.exists(cover_dest):
+def load_cookie(path=COOKIE_FILE):
+    cookie = os.environ.get('MAIL_NOVEL_COOKIE', '').strip()
+    if not cookie:
         try:
-            n = download_file(cookie, cover_url, cover_dest)
-            print(f"  [封面] {name} -> {cover_dest} ({n} bytes)")
-        except Exception as e:
-            print(f"  [封面失败] {name} {cover_fname}: {e}")
+            cookie = Path(path).read_text(encoding='utf-8').strip()
+        except FileNotFoundError:
+            raise CrawlError('请在 scripts/cookie.txt 或 MAIL_NOVEL_COOKIE 中设置 Cookie。') from None
+    if not cookie or '\n' in cookie or '\r' in cookie:
+        raise CrawlError('Cookie 必须是非空的一行请求头内容。')
+    return cookie
+
+
+class Client:
+    def __init__(self, cookie):
+        self.cookie = cookie
+        self.opener = urllib.request.build_opener(NoRedirect())
+
+    def request(self, url):
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme != 'https' or parsed.netloc != 'mail.ypan.hk':
+            raise CrawlError('只允许请求原站 HTTPS 地址，未发送 Cookie。')
+        req = urllib.request.Request(url, headers={
+            'Accept': '*/*', 'Accept-Language': 'zh-CN,zh;q=0.9',
+            'Cache-Control': 'no-cache', 'Referer': BASE + '/novel',
+            'User-Agent': 'Mozilla/5.0', 'Cookie': self.cookie,
+        })
+        try:
+            with self.opener.open(req, timeout=30) as response:
+                data = response.read()
+                content_type = response.headers.get_content_type()
+        except urllib.error.HTTPError as error:
+            if error.code in (401, 403):
+                raise CrawlError('鉴权失败，请更新本地 Cookie 后重试。') from None
+            raise CrawlError('原站请求失败：HTTP %s' % error.code) from None
+        except (urllib.error.URLError, TimeoutError):
+            raise CrawlError('网络请求失败或超时，请稍后重试。') from None
+        if content_type == 'text/html' or data.lstrip().lower().startswith((b'<!doctype', b'<html')):
+            raise CrawlError('接口返回了 HTML 而非数据，请检查本地登录态。')
+        return data, content_type
+
+    def json(self, path):
+        raw, _ = self.request(BASE + path)
+        try:
+            data = json.loads(raw)
+        except (ValueError, UnicodeDecodeError):
+            raise CrawlError('接口未返回有效 JSON，未修改本地小说。') from None
+        return data
+
+    def image(self, url):
+        raw, content_type = self.request(url)
+        if not raw or not content_type.startswith('image/'):
+            raise CrawlError('图片接口返回非图片数据。')
+        return raw
+
+
+def required_text(obj, key):
+    value = obj.get(key) if isinstance(obj, dict) else None
+    if not isinstance(value, str) or not value.strip() or '\n' in value or '\r' in value:
+        raise CrawlError('书目或章节字段无效：' + key)
+    return value.strip()
+
+
+def identifier(obj):
+    value = required_text(obj, 'id')
+    if not ID_PATTERN.fullmatch(value):
+        raise CrawlError('无效的远端 ID。')
+    return value
+
+
+def validate_catalog(data):
+    if not isinstance(data, dict) or not isinstance(data.get('books'), list):
+        raise CrawlError('书目接口应返回 {books: [...]}，未修改本地文件。')
+    books, ids = [], set()
+    for item in data['books']:
+        book_id = identifier(item)
+        if book_id in ids:
+            raise CrawlError('书目存在重复 ID。')
+        ids.add(book_id)
+        title = required_text(item, 'title')
+        chapters = item.get('chapters')
+        if not isinstance(chapters, list):
+            raise CrawlError('书目缺少 chapters 列表。')
+        chapter_ids, normalized = set(), []
+        for index, chapter in enumerate(chapters, 1):
+            chapter_id = identifier(chapter)
+            if chapter_id in chapter_ids:
+                raise CrawlError('章节存在重复 ID。')
+            chapter_ids.add(chapter_id)
+            normalized.append({'id': chapter_id, 'num': str(index).zfill(2),
+                               'title': required_text(chapter, 'title')})
+        cover, intro = item.get('coverUrl', ''), item.get('description', '')
+        if not isinstance(cover, str) or not isinstance(intro, str):
+            raise CrawlError('封面或简介格式无效。')
+        books.append({'id': book_id, 'title': title, 'coverUrl': cover,
+                      'description': intro, 'chapters': normalized})
+    return books
+
+
+def image_location(value):
+    url = urllib.parse.urljoin(BASE + '/', value)
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != 'https' or parsed.netloc != 'mail.ypan.hk' or parsed.query or parsed.fragment:
+        raise CrawlError('不支持外站或带参数的图片地址，未发送 Cookie。')
+    filename = urllib.parse.unquote(parsed.path.removeprefix('/novel/img/'))
+    if not parsed.path.startswith('/novel/img/') or not re.fullmatch(r'[A-Za-z0-9_.-]+\.(?:png|jpg|jpeg|gif|webp|avif)', filename, re.I):
+        raise CrawlError('图片路径不安全或格式不支持。')
+    return url, filename
+
+
+def book_entry(book, entries):
+    existing = next((b for b in entries if b.get('sourceId') == book['id']), None)
+    if existing is None:
+        existing = next((b for b in entries if b.get('slug') == book['title'] and not b.get('sourceId')), None)
+    if existing:
+        result = dict(existing)
     else:
-        print(f"  [封面] 已存在，跳过")
-
-# 2) 逐章正文 + 图片
-    merged_lines = []
-    chapter_meta = []
-    seen = set()
-    for num, cid in chapters:
-        try:
-            data = fetch_chapter(cookie, book_id, cid)
-        except Exception as e:
-            print(f"  [章节失败] {num} {cid}: {e}")
-            continue
-
-        title = data.get("title", f"第 {num} 章")
-        content = data.get("content", "")
-
-        # 提取并下载图片
-        md_imgs = re.findall(r'!\[[^\]]*\]\(([^)]+)\)', content)
-        raw_imgs = IMG_PATTERN.findall(content)
-        all_imgs = set(md_imgs + raw_imgs)
-        for img_path in all_imgs:
-            medium = img_path if img_path.startswith("http") else f"{BASE}{img_path}"
-            fname = img_path.split("/")[-1]
-            dest = os.path.join(assets_dir, fname)
-            if fname in seen:
-                continue
-            try:
-                n = download_file(cookie, medium, dest)
-                seen.add(fname)
-                print(f"  [图] {num} {fname} ({n} bytes)")
-            except Exception as e:
-                print(f"  [图失败] {num} {fname}: {e}")
-
-# 处理正文：保留原 Markdown 图片标记，仅把图片路径改为本地 assets 相对路径
-        lines = []
-        for ln in content.split("\n"):
-            s = ln.strip()
-            if s.startswith("![") and "](" in s:
-                # ![alt](/novel/img/xxx.png) -> ![alt](assets/xxx.png)
-                new_ln = re.sub(r'\]\(/novel/img/([^)]+)\)', r'](assets/\1)', s)
-                lines.append(new_ln)
-                continue
-            if s.startswith("```"):
-                continue
-            lines.append(ln)
-        body = "\n".join(lines).strip()
-        merged_lines.append(f"## {title}\n\n{body}\n")
-        print(f"  [正文OK] {title}")
-
-# 4) 写单章 txt（含本地图片引用）
-        single_path = os.path.join(book_dir, f"{num}_chapter.txt")
-        with open(single_path, "w", encoding="utf-8") as f:
-            f.write(f"# {title}\n\n{body}\n")
-        chapter_meta.append({"num": str(num).zfill(2), "title": title})
-        time.sleep(0.3)
-
-# 3) 合并全集
-    merged_path = os.path.join(book_dir, f"{name}_全集.txt")
-    with open(merged_path, "w", encoding="utf-8") as f:
-        f.write(f"{name}\n" + "=" * 30 + "\n\n" + "\n".join(merged_lines))
-    print(f"  [全集] -> {merged_path} ({os.path.getsize(merged_path)} bytes, {len(merged_lines)} 章)")
-
-    # 4) 章节目录 chapters.json（供网页阅读按需加载）
-    import json as _json
-    ch_path = os.path.join(book_dir, "chapters.json")
-    with open(ch_path, "w", encoding="utf-8") as f:
-        _json.dump(chapter_meta, f, ensure_ascii=False, indent=2)
-    print(f"  [目录] -> {ch_path} ({len(chapter_meta)} 章)")
-
-    print(f"  目录: {book_dir}")
+        directory = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', book['title']).strip(' .') or book['id']
+        if any(b['dir'].casefold() == directory.casefold() for b in entries):
+            directory += '_' + book['id']
+        if any(b['key'] == book['id'] for b in entries):
+            raise CrawlError('新书 key 与已有书籍冲突。')
+        result = {'key': book['id'], 'dir': directory, 'prefix': ''}
+    result.update(sourceId=book['id'], slug=book['title'], intro=book['description'])
+    result['cover'] = image_location(book['coverUrl'])[1] if book['coverUrl'] else '_cover.svg'
+    return result
 
 
-def main():
-    import sys
-    args = sys.argv[1:]
-    if args and args[0] == "--list":
-        print("可用书名：")
-        for name, *_ in BOOKS:
-            print(f"  - {name}")
+def placeholder_cover(title):
+    title = html.escape(title)
+    return ('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800" viewBox="0 0 600 800">'
+            '<rect width="600" height="800" fill="#172338"/>'
+            '<rect x="30" y="30" width="540" height="740" rx="12" fill="none" stroke="#cdb486"/>'
+            '<path d="M210 240h80q10 0 10 12q0-12 10-12h80v110h-80q-10 0-10 12q0-12-10-12h-80z" '
+            'fill="none" stroke="#cdb486" stroke-width="4"/>'
+            '<foreignObject x="60" y="420" width="480" height="220">'
+            '<div xmlns="http://www.w3.org/1999/xhtml" style="color:#f6ead1;font:42px serif;text-align:center;overflow-wrap:anywhere">'
+            + title + '</div></foreignObject>'
+            '<text x="300" y="715" fill="#cdb486" font-size="20" text-anchor="middle">暂无封面</text></svg>')
+
+
+def localize_body(client, content, stage, current, refresh=False):
+    def replace(match):
+        url, filename = image_location(match[2])
+        ensure_image(client, url, filename, stage, current, refresh)
+        return '![' + match[1] + '](assets/' + filename + ')'
+    body = IMAGE_PATTERN.sub(replace, content)
+    return '\n'.join(line for line in body.splitlines() if not line.strip().startswith('```')).strip()
+
+
+def ensure_image(client, url, filename, stage, current, refresh):
+    target = stage / 'assets' / filename
+    if target.exists():
         return
-
-    cookie = load_cookie()
-    targets = BOOKS
-    if args:
-        only = args[0]
-        targets = [b for b in BOOKS if b[0] == only]
-        if not targets:
-            print(f"未找到书名「{only}」，可用：{[b[0] for b in BOOKS]}")
-            return
-    for name, book_id, cover, chapters in targets:
-        print(f"\n===== 开始爬取《{name}》 ({len(chapters)} 章) =====")
-        process_book(cookie, name, book_id, cover, chapters)
-    print("\n✅ 全部完成")
+    old = current / 'assets' / filename
+    if old.is_symlink():
+        raise CrawlError('拒绝读取符号链接图片。')
+    if not refresh and old.is_file() and old.stat().st_size:
+        shutil.copyfile(old, target)
+    else:
+        target.write_bytes(client.image(url))
 
 
-if __name__ == "__main__":
-    main()
+def atomic_write(path, text):
+    path = Path(path)
+    if path.is_symlink():
+        raise CrawlError('拒绝覆盖符号链接文件。')
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                     prefix='.crawl-', delete=False) as handle:
+        temporary = Path(handle.name)
+        handle.write(text)
+    try:
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def sync_book(client, book, entry, root, refresh=False):
+    current = root / entry['dir']
+    if current.is_symlink() or (current / 'assets').is_symlink():
+        raise CrawlError('拒绝写入符号链接目录。')
+    with tempfile.TemporaryDirectory(prefix='.crawl-', dir=root) as temp:
+        stage = Path(temp)
+        (stage / 'assets').mkdir()
+        if book['coverUrl']:
+            url, filename = image_location(book['coverUrl'])
+            ensure_image(client, url, filename, stage, current, refresh)
+        else:
+            (stage / 'assets/_cover.svg').write_text(placeholder_cover(book['title']), encoding='utf-8')
+        metadata, merged = [], []
+        for chapter in book['chapters']:
+            path = '/novel/text/books/%s/chapters/%s' % (book['id'], chapter['id'])
+            data = client.json(path)
+            if not isinstance(data, dict) or not isinstance(data.get('content'), str):
+                raise CrawlError('章节正文缺失，保留本书旧文件。')
+            if data.get('id') != chapter['id']:
+                raise CrawlError('章节响应 ID 不匹配，保留本书旧文件。')
+            title = required_text(data, 'title')
+            body = localize_body(client, data['content'], stage, current, refresh)
+            filename = chapter['num'] + '_chapter.txt'
+            (stage / filename).write_text('# ' + title + '\n\n' + body + '\n', encoding='utf-8')
+            metadata.append({'num': chapter['num'], 'title': title, 'file': filename, 'id': chapter['id']})
+            merged.append('## ' + title + '\n\n' + body + '\n')
+            print('  [正文与插图] ' + title, flush=True)
+            time.sleep(0.3)
+        (stage / 'chapters.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        (stage / (entry['dir'] + '_全集.txt')).write_text(book['title'] + '\n' + '=' * 30 + '\n\n' + '\n'.join(merged), encoding='utf-8')
+        # Only touch the current book after all its chapters/images have succeeded.
+        (current / 'assets').mkdir(parents=True, exist_ok=True)
+        staged = [p for p in stage.rglob('*') if p.is_file()]
+        if any((current / p.relative_to(stage)).is_symlink() for p in staged):
+            raise CrawlError('拒绝覆盖符号链接文件。')
+        keep = {c['file'] for c in metadata}
+        obsolete = [p for p in current.glob('*_chapter.txt') if re.fullmatch(r'\d+_chapter\.txt', p.name) and p.name not in keep]
+        if obsolete:
+            backup_root = root / '.crawl-backups'
+            if backup_root.is_symlink():
+                raise CrawlError('拒绝写入符号链接备份目录。')
+            backup_root.mkdir(exist_ok=True)
+            backup = Path(tempfile.mkdtemp(prefix=book['id'] + '-', dir=backup_root))
+            for path in obsolete:
+                path.replace(backup / path.name)
+            print('  [归档] 已移除章节保留于 .crawl-backups，不再进入构建。')
+        for path in staged:
+            path.replace(current / path.relative_to(stage))
+
+
+def save_entries(root, entries):
+    content = ('// 本地爬虫生成；旧书 key/dir 保留，新书自动登记。Pages 构建不访问原站。\n'
+               'window.BOOKS = ' + json.dumps(entries, ensure_ascii=False, indent=2) + ';\n')
+    atomic_write(root / 'js/books.js', content)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('books', nargs='*', help='按书名或远端 ID 选择；默认所有书')
+    parser.add_argument('--list', action='store_true', help='只获取远端书目，不写小说或书架')
+    parser.add_argument('--refresh-images', action='store_true', help='重新下载已有图片和封面')
+    parser.add_argument('--cookie-file', type=Path, default=COOKIE_FILE)
+    args = parser.parse_args(argv)
+    try:
+        client = Client(load_cookie(args.cookie_file))
+        books = validate_catalog(client.json('/novel/text'))
+        if args.list:
+            for book in books:
+                print('%s | %s | %d 章%s' % (book['title'], book['id'], len(book['chapters']), ' | 暂无封面' if not book['coverUrl'] else ''))
+            return 0
+        if not books:
+            raise CrawlError('远端书目为空，保留本地书架不变。')
+        unknown = set(args.books) - {value for book in books for value in (book['title'], book['id'])}
+        if unknown:
+            raise CrawlError('找不到指定书籍：' + '、'.join(sorted(unknown)))
+        targets = [b for b in books if not args.books or b['title'] in args.books or b['id'] in args.books]
+        entries = read_books(ROOT)
+        for book in targets:
+            entry = book_entry(book, entries)
+            if not any(b['dir'] == entry['dir'] for b in entries) and (ROOT / entry['dir']).exists():
+                raise CrawlError('新书目录已存在但未登记，拒绝覆盖：' + entry['dir'])
+            print('开始同步《%s》：%d 章' % (book['title'], len(book['chapters'])), flush=True)
+            sync_book(client, book, entry, ROOT, args.refresh_images)
+            index = next((i for i, b in enumerate(entries) if b['key'] == entry['key']), len(entries))
+            if index == len(entries):
+                entries.append(entry)
+            else:
+                entries[index] = entry
+            save_entries(ROOT, entries)
+        print('本地同步完成。请检查 git diff，构建验证后再提交推送。')
+        return 0
+    except (CrawlError, OSError, ValueError) as error:
+        print('同步失败：' + str(error), file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -94,7 +94,8 @@ def build(root=ROOT):
             for image in assets.rglob('*'):
                 if image.is_symlink():
                     raise ValueError('Refusing symlink asset: ' + str(image))
-                if image.is_file() and image.suffix.lower() in IMAGE_TYPES:
+                generated_cover = image == assets / '_cover.svg'
+                if image.is_file() and (image.suffix.lower() in IMAGE_TYPES or generated_cover):
                     copy_file(image, destination / 'assets' / image.relative_to(assets))
         cover = Path(book['cover'])
         if cover.name != book['cover'] or not (destination / 'assets' / cover).is_file():

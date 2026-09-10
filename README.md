@@ -1,6 +1,6 @@
 # 邮件小说批量爬取
 
-自动将「Mail Web」小说平台（`mail.ypan.hk`）上的小说按本抓取为 Markdown 文本，同时下载封面与正文插图，归入本地 `~/Downloads/小说/{书名}/` 目录，方便离线阅读与归档。
+自动将「Mail Web」小说平台（`mail.ypan.hk`）上的小说按本抓取为 Markdown 文本，同时下载封面与正文插图，归入当前仓库的 `{书名}/` 目录，方便离线阅读与归档。
 
 本项目为自用工具，所有内容用于个人阅读备份。
 
@@ -13,7 +13,7 @@
 ├── README.md              # 本说明
 ├── .gitignore             # Git 忽略规则（含 cookie 与输出目录）
 ├── scripts/               # 爬取脚本与配置
-│   ├── crawl_all.py       # 主脚本：三本书正文 + 封面 + 插图 + 单章/全集
+│   ├── crawl_all.py       # 本地动态书目同步：正文 + 封面 + 插图 + 单章/全集
 │   └── cookie.txt         # 登录凭据（勿提交到 git）
 ├── 李氏庄园/              # 输出：每本书一个目录
 │   ├── 01_chapter.txt     # 单章（编号 + 标题）
@@ -25,7 +25,8 @@
 │       ├── 22091.jpg
 │       └── 22092.jpg
 ├── 回信券风暴/
-└── 股神牛久盛/
+├── 股神牛久盛/
+└── 名将之后/
 ```
 
 ---
@@ -34,10 +35,11 @@
 
 ### 1. 安装 / 依赖
 
-仅需 Python 3 标准库，无第三方依赖。
+需要 Python 3.9+；同步书架配置和构建另需 Node.js 22+。均使用标准库，无需安装第三方依赖。
 
 ```bash
-python3 --version   # 3.7+ 即可
+python3 --version
+node --version
 ```
 
 ### 2. 配置 Cookie
@@ -53,23 +55,39 @@ __Secure-next-auth.session-token=xxx; your_cookie_key=xxx
 
 
 
-### 3. 运行
+### 3. 本地获取，再提交推送
+
+以下命令在仓库根目录运行。爬虫只在本机访问 `/novel/text` 获取完整书目及章节 ID，再下载所选书的正文和图片；不再硬编码书目、封面或章节列表。
 
 ```bash
-cd scripts
-
-# 爬取全部三本书
-python3 crawl_all.py
-
-# 只爬某一本
-python3 crawl_all.py 李氏庄园
-python3 crawl_all.py 回信券风暴
-
-# 查看可用书名
-python3 crawl_all.py --list
+python3 scripts/crawl_all.py --list
+python3 scripts/crawl_all.py 名将之后
+python3 scripts/crawl_all.py
 ```
 
-输出自动写入 `~/Downloads/小说/{书名}/`，已存在的图片会跳过，不会重复下载。
+`--list` 只显示最新书目与章数，不改文件；指定书名时只同步该书；不指定则同步所有书。每本书下载成功后自动更新 `js/books.js`，保留旧书的 key、目录和访问链接，新书使用稳定远端 ID 作为 key。
+
+章节与图片写入当前仓库目录，不受运行时工作目录影响。新书缺少封面时自动生成 `assets/_cover.svg` 占位封面；纯图片正文同样会下载到本地。已有图片默认复用，原站同名图片更新时可加 `--refresh-images`。正文每次重新下载，更新标题与内容。
+
+先下载到临时目录，一本书的全部正文和图片成功后才替换该书文件。请求、鉴权或图片失败会非零退出，不用残缺数据覆盖该书旧文件。远端移除的章节会归档到 Git 忽略的 `.crawl-backups/`，避免下次构建继续收录；不自动删除整本本地小说。章节按接口列表顺序编号，远端插入或重排章节时，旧的按编号阅读记录可能需要重新选择。
+
+Cookie 从本地 `scripts/cookie.txt` 读取，也可通过环境变量 `MAIL_NOVEL_COOKIE` 或 `--cookie-file` 指定；仅发往 `https://mail.ypan.hk`，不打印、不写入公开文件、不转发到外站或重定向地址。Cookie 过期时在本机更新后重试。
+
+本地同步后检查、测试、构建，再提交推送：
+
+```bash
+python3 -m unittest discover -s tests -p 'test_*.py'
+node --test tests/frontend.test.cjs
+python3 scripts/build_site.py
+git status --short
+git diff
+git add .
+git diff --cached --name-only
+git commit -m "update novels from local crawl"
+git push origin main
+```
+
+GitHub Actions 只使用推送后的仓库文件构建静态站点，不运行爬虫、不访问原站、不使用 Cookie。网页也只读取 Pages 中的静态目录、正文和图片。
 
 ---
 
@@ -85,19 +103,13 @@ python3 crawl_all.py --list
 
 | 用法 | 说明 |
 |---|---|
-| `python3 crawl_all.py` | 爬取所有书 |
-| `python3 crawl_all.py <书名>` | 只爬指定书 |
-| `python3 crawl_all.py --list` | 打印可用书名 |
+| `python3 scripts/crawl_all.py` | 本地获取当前全部书目并同步所有书 |
+| `python3 scripts/crawl_all.py <书名或ID> ...` | 只同步指定书，可指定多本 |
+| `python3 scripts/crawl_all.py --list` | 只查询最新书目，不写小说文件 |
+| `python3 scripts/crawl_all.py --refresh-images` | 同步所有书，强制重新下载图片和封面 |
+| `python3 scripts/crawl_all.py --cookie-file <路径>` | 使用指定的本地 Cookie 文件 |
 
-新增一本小说时，编辑 `crawl_all.py` 顶部 `BOOKS` 列表，追加元组即可：
-
-```python
-BOOKS = [
-    ("书名", "book-xxxx", "封面文件名.png", [
-        ("01", "chapter-xxxx"), ("02", "chapter-yyyy"), …
-    ]),
-]
-```
+新增小说无需修改爬虫或手工登记书架；本地运行同步命令后提交新增目录和更新后的 `js/books.js` 即可。
 
 ---
 
@@ -132,6 +144,7 @@ git push -u origin main
 | 阅读《李氏庄园》 | `.../mail_novels/reader.html?book=lishizhuangyuan` |
 | 阅读《回信券风暴》 | `.../mail_novels/reader.html?book=huixinquanfengbao` |
 | 阅读《股神牛久盛》 | `.../mail_novels/reader.html?book=gushenniujiusheng` |
+| 阅读《名将之后》 | [打开阅读](https://whypilotxia.github.io/mail_novels/reader.html?book=book-mtvc2rkc-0gmmdr) |
 
 支持功能：书架封面展示、正文阅读、正文内嵌插图、上一章 / 下一章切换。
 
@@ -144,7 +157,7 @@ Pages 的 Source 使用 **GitHub Actions**。每次推送到 `main`，工作流 
 - 书架每本书只请求一个 `chapters.json` 统计章节数，不请求任何章节正文；阅读器只请求目录和当前章正文，切章按需加载，已读章节内存缓存。目录加载失败会提示重试，不再逐章探测。
 - 上下章按钮显示相邻章节标题；第一章隐藏上一章，最后一章隐藏下一章，不显示灰色按钮；仅一章时隐藏整个翻章栏。保存的阅读记录优先使用章节编号，删除前面章节不会把记录错移到其他章。
 - 发布资源附带构建内容版本号；目录和正文请求重新校验缓存，避免旧脚本、旧目录和旧正文混用。已打开的页面需要刷新才能使用新版本。
-- 新增一本书时，在 `js/books.js` 添加书名、目录、封面、简介和唯一 key，并提交小说目录；新增到现有书的章节无需改 JavaScript。目录改名也需要同步修改 `dir`。
+- 本地运行爬虫时会自动登记新书并更新简介、封面和目录；提交 `js/books.js` 与小说目录后再构建。手工新增非原站小说时仍需自行登记配置；目录手工改名也需同步 `dir`。
 - 构建不登录原网站、不自动爬取，不需要 Cookie。它只发布 HTML、JS、CSS、章节正文、生成的目录及图片，不会发布 `scripts/`、Cookie、全集或其他未列入发布范围的文件。
 
 提交小说文件变化后推送即可；本机未提交或未推送的改动不会影响线上：
