@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>阅读</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <button class="back-btn" id="backBtn">← 返回书架</button>
+  <div class="brand">阅读器</div>
+</header>
+
+<main class="reader-wrap">
+  <div class="reader-grid">
+    <aside class="sidebar" id="sidebar">
+      <div class="cover" id="sideCover"></div>
+      <h1 class="bookname" id="sideName"></h1>
+      <p class="bookdesc" id="sideDesc"></p>
+      <nav class="chapters">
+        <p class="chap-label">章节</p>
+        <div class="chap-list" id="chapList"></div>
+      </nav>
+    </aside>
+    <article class="article" id="article"></article>
+  </div>
+</main>
+
+<footer class="footer">本站内容仅供个人阅读备份 · Powered by GitHub Pages</footer>
+
+<script src="js/books.js"></script>
+<script src="js/reader.js"></script>
+</body>
+</html>
