@@ -36,6 +36,9 @@
 
   // 把正文渲染为 HTML：内嵌图 ![alt](assets/x.png) 转 <figure><img>, 其余按段落包 <p>
   function renderBody(book, content) {
+    // 统一 Windows (CRLF)、旧式 Mac (CR) 与 Unix (LF) 换行，避免 \r 被 pre-wrap 额外渲染为空行。
+    content = content.replace(/\r\n?/g, '\n');
+
     var dir = book.dir;
     var figPattern = /!\[([^\]]*)\]\((assets\/([^)]+))\)/g;
     var figs = [];

@@ -1,0 +1,2 @@
+# Keep chapter text files consistent across Windows and GitHub Pages.
+*.txt text eol=lf
